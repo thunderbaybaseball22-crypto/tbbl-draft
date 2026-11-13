@@ -10,7 +10,7 @@ Each pick has a time limit (the commissioner sets it; it starts at 1 hour). The 
 
 ## Making a pick
 
-1. Open **Players**. Search, filter by position, or sort by clicking a column heading.
+1. Open **Players**. Use **Stats** to switch between **Hitters** and **Pitchers** (each shows last season's stats). Search, filter by position, or sort by clicking a column heading; the first click on a stat sorts best first (most home runs, lowest ERA).
 2. Under **Drafting for**, choose the pick (your on-clock pick is chosen for you).
 3. Press **Draft** next to a player and confirm. You can only pick for a team that currently owns the pick, including picks you received in trades.
 
