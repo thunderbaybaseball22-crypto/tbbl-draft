@@ -7,6 +7,7 @@ import { exportSchedule, exportResults, exportNewPlayers, BAT_STATS, PIT_STATS }
 import { checkPassword, PASSWORD_RULES, REQUEST_EXPIRY_MINUTES } from './lib/password-check.js';
 import { RESTART_WORD, lockedReason } from './lib/restart.js';
 import { pickLabel, overallLabel } from './lib/pickno.js';
+import { checkOwnerEdit, ownerFormValues } from './lib/owners.js';
 import * as S from './store.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -18,7 +19,7 @@ const hms = (ms) => {
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
-const ui = { tab: 'board', built: null, search: '', pos: '', kind: '', avail: 'available', view: 'bat', sort: { key: 'name', dir: 1 }, target: null, rosterTeam: '', msg: '', adminBuilt: false };
+const ui = { tab: 'board', built: null, search: '', pos: '', kind: '', avail: 'available', view: 'bat', editOwner: null, sort: { key: 'name', dir: 1 }, target: null, rosterTeam: '', msg: '', adminBuilt: false };
 const TABS = [['board', 'Board'], ['players', 'Players'], ['mine', 'My picks'], ['queue', 'Queue'], ['rosters', 'Rosters'], ['history', 'History']];
 
 const teamsOf = (st) => [...new Set(Object.values(st.picks).flatMap((p) => [p.origTeam, p.ownerTeam]))].sort();
@@ -452,6 +453,33 @@ function pwText(s, email) {
   const old = S.serverNow() - (s.requestedAt || 0) > REQUEST_EXPIRY_MINUTES * 60000;
   return `Pending since ${esc(ET(s.requestedAt))}: waiting for the ticker to run on your PC${s.note ? ' (' + esc(s.note) + ')' : ''}.${old ? ` Older than ${REQUEST_EXPIRY_MINUTES} minutes: it will be dropped, not applied. Cancel it to remove the stored password now.` : ''} <button data-act="pwcancel" data-email="${esc(email)}">Cancel request</button>`;
 }
+/** Owners table (commissioner). The row in ui.editOwner is shown as an edit form. */
+function ownersHtml(r) {
+  const loginAt = (em) => r.logins[em];
+  const usedSite = (em) => r.queues[em] !== undefined || r.audit.some((a) => a.by === em);
+  const editRow = (o) => {
+    const v = ownerFormValues(o);
+    return `<tr class="editing"><td><input id="oe-teams" size="8" value="${esc(v.teams)}" aria-label="Team codes (separate several with a space)"></td>
+    <td><input id="oe-names" size="22" value="${esc(v.teamNames)}" aria-label="Team name (several: separate with /)"></td>
+    <td><input id="oe-manager" size="16" maxlength="100" value="${esc(v.manager)}" aria-label="Manager name"></td>
+    <td><input id="oe-email" type="email" size="26" maxlength="254" value="${esc(v.email)}" aria-label="Owner email"></td>
+    <td colspan="3"><button data-act="ownsave">Save</button> <button data-act="owncancel">Cancel</button>
+    <p id="oe-msg" class="note" role="alert"></p>
+    <p class="note">Several teams: codes separated by a space, names in the same order separated by " / ". Changing the email moves the team and the owner's draft list to the new address; the old address can no longer draft.</p></td></tr>`;
+  };
+  const row = (o) => (ui.editOwner === o.email ? editRow(o) : `<tr><td>${esc((o.teams || []).join(' '))}</td><td>${esc(Object.values(o.teamNames || {}).join(' / '))}</td><td>${esc(o.manager || '')}</td><td>${esc(o.email)}</td>
+    <td>${loginAt(o.email) ? 'Last signed in ' + esc(ET(loginAt(o.email))) : usedSite(o.email) ? 'Has used the site (saved a list or made a pick)' : 'No sign-in recorded'}</td>
+    <td><button data-act="ownedit" data-email="${esc(o.email)}"${ui.editOwner ? ' disabled' : ''}>Edit</button> <button data-act="resetone" data-email="${esc(o.email)}">Send set-password email</button> <button data-act="pwopen" data-email="${esc(o.email)}"${pwState(r.pwStatus[o.email]) === 'pending' ? ' disabled' : ''}>Set password</button></td>
+    <td>${pwText(r.pwStatus[o.email], o.email)}</td></tr>`);
+  return `<table><thead><tr><th scope="col">Team</th><th scope="col">Team name</th><th scope="col">Manager</th><th scope="col">Email</th><th scope="col">Sign-in status</th><th scope="col">Action</th><th scope="col">Password request</th></tr></thead><tbody>
+    ${[...r.owners].sort((a, b) => (a.teams[0] || '').localeCompare(b.teams[0] || '')).map(row).join('') || '<tr><td colspan="7">No owners imported yet.</td></tr>'}</tbody></table>
+    <p class="note">What this screen can and cannot know: the browser cannot list Firebase logins on the free plan, so it cannot tell whether an account exists or whether a password has been set. "Last signed in" is recorded when an owner signs in with this version of the site; "No sign-in recorded" means none seen since then, not that the owner never signed in.</p>`;
+}
+const draftTeams = (st) => [...new Set(Object.values(st.picks).flatMap((p) => [p.origTeam, p.ownerTeam]))].filter(Boolean);
+function redrawOwners() {
+  const el = $('#adm-owners');
+  if (el) { el.innerHTML = ownersHtml(S.raw()); el.dataset.h = ''; }
+}
 function fillAdmin(st) {
   const r = S.raw();
   const keep = (id, html) => { const el = $(id); if (el && el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; } };
@@ -469,14 +497,8 @@ function fillAdmin(st) {
   keep('#adm-mail', `<p><label><input type="checkbox" id="groupmail" ${on ? 'checked' : ''}> <strong>Group pick emails: ${on ? 'ON' : 'OFF'}</strong></label></p>
     <p class="note">Default OFF. When ON, the ticker on the commissioner's PC emails the league group once for every 5 picks made (and once more when the draft completes). Picks made while this was OFF are never emailed: turning it ON starts counting from the picks made after that moment. Turn it OFF again to stop all emails (a batch already being sent may still go out). Nothing is sent unless the ticker is running.</p>
     <p class="note">${M && M.enabledAt === (E && E.enabledAt) ? `Emails sent so far this time: ${esc(M.batchNo || 0)} batch(es), ${esc((M.sent || []).length)} pick(s) covered.${M.lastSentAt ? ' Last email: ' + esc(ET(M.lastSentAt)) + '.' : ''}${M.pending ? ' A batch is ' + esc(M.pending.status === 'failed' ? 'waiting to be retried' : 'being sent') + '.' : ''}${M.lastError ? ' <strong>Last send problem: ' + esc(M.lastError) + '</strong>' : ''}` : (on ? 'The ticker has not started counting yet (it does so on its next run).' : 'Not enabled.')}</p>`);
-  const loginAt = (em) => r.logins[em];
-  const usedSite = (em) => r.queues[em] !== undefined || r.audit.some((a) => a.by === em);
-  keep('#adm-owners', `<table><thead><tr><th scope="col">Team</th><th scope="col">Team name</th><th scope="col">Manager</th><th scope="col">Email</th><th scope="col">Sign-in status</th><th scope="col">Action</th><th scope="col">Password request</th></tr></thead><tbody>
-    ${[...r.owners].sort((a, b) => (a.teams[0] || '').localeCompare(b.teams[0] || '')).map((o) => `<tr><td>${esc((o.teams || []).join(' '))}</td><td>${esc(Object.values(o.teamNames || {}).join(' / '))}</td><td>${esc(o.manager || '')}</td><td>${esc(o.email)}</td>
-    <td>${loginAt(o.email) ? 'Last signed in ' + esc(ET(loginAt(o.email))) : usedSite(o.email) ? 'Has used the site (saved a list or made a pick)' : 'No sign-in recorded'}</td>
-    <td><button data-act="resetone" data-email="${esc(o.email)}">Send set-password email</button> <button data-act="pwopen" data-email="${esc(o.email)}"${pwState(r.pwStatus[o.email]) === 'pending' ? ' disabled' : ''}>Set password</button></td>
-    <td>${pwText(r.pwStatus[o.email], o.email)}</td></tr>`).join('') || '<tr><td colspan="7">No owners imported yet.</td></tr>'}</tbody></table>
-    <p class="note">What this screen can and cannot know: the browser cannot list Firebase logins on the free plan, so it cannot tell whether an account exists or whether a password has been set. "Last signed in" is recorded when an owner signs in with this version of the site; "No sign-in recorded" means none seen since then, not that the owner never signed in.</p>`);
+  // While a row is being edited the table is not redrawn (live updates would wipe what you are typing).
+  if (!ui.editOwner) keep('#adm-owners', ownersHtml(r));
   if (!c) return;
   const open = sortedPicks(st).filter((p) => p.status !== 'made' && p.status !== 'void');
   const openAndSkipped = sortedPicks(st).filter((p) => p.status === 'open' || p.status === 'skipped');
@@ -554,7 +576,7 @@ function onClick(e) {
   const st = S.getState(), r = S.raw();
   if (d.monitor === 'lock') return void requestWakeLock().then(fillMonitor);
   if (d.monitor === 'run') return monitorRun();
-  if (d.tab) { ui.tab = d.tab; ui.built = null; return render(); }
+  if (d.tab) { ui.tab = d.tab; ui.built = null; ui.editOwner = null; return render(); }
   // first click on a stat sorts high to low (ERA: low to high); text columns sort A to Z
   if (d.sort) { ui.sort = { key: d.sort, dir: ui.sort.key === d.sort ? -ui.sort.dir : (d.sort.includes('.') && d.sort !== 'pit.ERA' ? -1 : 1) }; return fillPlayers(st); }
   if (d.rmplayer) {
@@ -706,6 +728,31 @@ function adminAction(act, st, r, d = {}) {
         catch (e) { out.push(`${o.email}: ${e.code === 'auth/email-already-in-use' ? 'login already exists (use re-send)' : e.message}`); }
       }
       $('#imp-out').textContent = out.join('\n');
+    },
+    ownedit: () => {
+      if (!d.email) return;
+      ui.editOwner = d.email; redrawOwners();
+      const f = $('#oe-teams'); if (f) f.focus();
+    },
+    owncancel: () => { ui.editOwner = null; redrawOwners(); },
+    ownsave: async () => {
+      const oldEmail = ui.editOwner;
+      const res = checkOwnerEdit(r.owners, oldEmail, { email: $('#oe-email').value, teams: $('#oe-teams').value, teamNames: $('#oe-names').value, manager: $('#oe-manager').value }, draftTeams(st));
+      if (res.errors.length) { $('#oe-msg').textContent = res.errors.join(' '); return; }
+      if (!res.changes.length) { ui.editOwner = null; return redrawOwners(); }
+      const extra = res.emailChanged ? `\n\n${oldEmail} will no longer be able to draft. The owner's draft list moves to ${res.owner.email}. If that owner is signed in now, they should sign out and in again.` : '\n\nIf the owner is signed in now, they should reload the page to see a team change.';
+      if (!confirm(`Save these changes?\n\n${res.changes.join('\n')}${extra}`)) return;
+      const { listMoved } = await S.updateOwner(oldEmail, res.owner, res.changes);
+      ui.editOwner = null; redrawOwners();
+      let msg = `Saved. ${res.changes.join('; ')}.${listMoved ? ' Draft list moved to the new email.' : ''}`;
+      if (res.emailChanged && confirm(`Create a login for ${res.owner.email} and email a password-setup link now?`)) {
+        try { await S.createOwnerAccount(res.owner.email, randomPw()); await S.resetPassword(res.owner.email); msg += ` Login created; setup email sent to ${res.owner.email}.`; }
+        catch (e) {
+          if (e.code !== 'auth/email-already-in-use') throw e;
+          await S.resetPassword(res.owner.email); msg += ` A login already existed for ${res.owner.email}; a set-password email was sent.`;
+        }
+      } else if (res.emailChanged) msg += ' No login was created yet: press "Create owner logins" in section 1 when ready (owners who already have a login are skipped).';
+      const m = $('#own-msg'); if (m) m.textContent = msg;
     },
     resetone: async () => {
       if (!d.email || !confirm(`Send a set-password email to ${d.email}?`)) return;

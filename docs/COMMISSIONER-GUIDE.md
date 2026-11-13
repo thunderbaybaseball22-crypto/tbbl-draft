@@ -46,6 +46,16 @@ League conventions the importer follows:
 
 **Owners** (e.g. `public/sample/SAMPLE-owners.csv`, or the league's `Abb, TeamName, ManagerName, ManagerEmail` layout): `email` (or `ManagerEmail`) and `team_code` (or `Abb`). One email may own several teams (separate codes with a space or `;`).
 
+## Editing an owner (any time, including while live)
+
+Commissioner tab, section 1b (Owners): press **Edit** on a row, change the team code(s), team name, manager or email, then **Save** (or Cancel). The table stops updating while you edit, so nothing you type is lost.
+
+- Several teams for one owner: codes separated by a space (`RAV COL`), names in the same order separated by ` / `.
+- The same checks as the owners file: a valid email, at least one team, only teams in the draft order, and a team can belong to only one email (take it off the other owner first).
+- **Changing an email** moves the team(s) and the owner's draft list (with the Auto-draft switch) to the new address. The old address can no longer draft. You are then offered to create the new login and send its password-setup email. The old login is left in Firebase Authentication; delete it there if you like.
+- Every save is written to the audit log (type `owner-edit`). An owner who is signed in while you change their teams or email should reload the page (or sign out and in).
+- Re-importing the owners file later replaces these edits with the file, so update your CSV too.
+
 ## Removing a player who is listed by mistake (any time, including while live)
 
 Players tab, signed in as commissioner: every row that is not already drafted has a **Remove** button. Confirm, give a reason (saved in the audit log) and he is out:

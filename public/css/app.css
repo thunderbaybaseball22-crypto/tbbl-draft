@@ -73,3 +73,6 @@ ol.recent { list-style:none; margin:0; padding:0; }
 
 /* player stats columns */
 th.num, td.num { text-align:right; white-space:nowrap; }
+/* Owners screen: row being edited */
+tr.editing td { background:#fffbe6; }
+tr.editing input { max-width:100%; }

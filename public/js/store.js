@@ -143,6 +143,31 @@ export const setGroupEmails = (on) => setDoc(doc(store.fb.db, 'config', 'email')
   groupEmails: !!on, enabledAt: on ? Date.now() : (store.emailCfg && store.emailCfg.enabledAt) || null, by: store.user.email.toLowerCase(), at: Date.now(),
 });
 
+// ---------- edit one owner (commissioner, Owners screen) ----------
+/**
+ * Save an edited owner (validated by lib/owners.js checkOwnerEdit). One atomic batch: write owners/{new email};
+ * if the email changed, delete owners/{old email} and copy the owner's draft list and Auto-draft switch to the new
+ * email (only if the new email has no list yet; the old list is left alone). Plus one audit entry.
+ * Works at any time, including while the draft is live and the real-draft lock is ON.
+ */
+export async function updateOwner(oldEmail, owner, changes) {
+  const { db } = store.fb;
+  const b = writeBatch(db);
+  b.set(doc(db, 'owners', owner.email), { email: owner.email, teams: owner.teams, teamNames: owner.teamNames || {}, manager: owner.manager || '' });
+  let listMoved = false;
+  if (owner.email !== oldEmail) {
+    b.delete(doc(db, 'owners', oldEmail));
+    const q = store.queues[oldEmail];
+    if (q && q.items.length && !store.queues[owner.email]) {
+      b.set(doc(db, 'queues', owner.email), { items: q.items, autoDraft: !!q.autoDraft });
+      listMoved = true;
+    }
+  }
+  b.set(doc(collection(db, 'audit')), { type: 'owner-edit', by: actor().email, at: serverNow(), email: oldEmail, newEmail: owner.email, teams: owner.teams, changes, listMoved });
+  await b.commit();
+  return { listMoved };
+}
+
 // ---------- remove / restore a player (commissioner) ----------
 /**
  * Take a player out of the draft list (he is in the pool by mistake). Works while the draft is live. Refuses a player

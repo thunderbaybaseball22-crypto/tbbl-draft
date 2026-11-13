@@ -295,6 +295,12 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['items', 'autoDraft'])
         && request.resource.data.autoDraft is bool
         && request.resource.data.items is list && request.resource.data.items.size() <= 300;
+      // When the commissioner changes an owner's email (Owners screen > Edit), the list is copied to the new email.
+      // Create only: the commissioner can never change a list that already exists.
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['items', 'autoDraft'])
+        && request.resource.data.autoDraft is bool
+        && request.resource.data.items is list && request.resource.data.items.size() <= 300;
     }
 
     // notices/{email}: written only by the unattended ticker (admin SDK bypasses rules), e.g. "your list is exhausted".
