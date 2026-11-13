@@ -1,0 +1,28 @@
+# OPTIONAL free scheduled ticker. Only works if this folder (TBBLDraft) is the root of a GitHub repository.
+# Setup and cautions: docs/TICKER.md. The service-account key goes in the repository secret
+# TBBL_SERVICE_ACCOUNT_JSON (Settings > Secrets and variables > Actions). Never put the key in a file.
+# Off until you set the repository variable TICKER_ENABLED = true (so it does not fail every 5 minutes before setup).
+name: TBBL draft ticker
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # about every 5 minutes (GitHub may delay or skip runs)
+  workflow_dispatch: {}
+concurrency:
+  group: tbbl-ticker
+  cancel-in-progress: false
+jobs:
+  tick:
+    if: ${{ vars.TICKER_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+        working-directory: tools
+      - run: node tools/ticker.mjs
+        env:
+          TBBL_SERVICE_ACCOUNT_JSON: ${{ secrets.TBBL_SERVICE_ACCOUNT_JSON }}
+          TBBL_GMAIL_APP_PASSWORD: ${{ secrets.TBBL_GMAIL_APP_PASSWORD }}   # optional, group pick emails

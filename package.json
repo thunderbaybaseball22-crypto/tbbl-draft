@@ -1,0 +1,10 @@
+{
+  "name": "tbbl-draft",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TBBL live fantasy-baseball draft (static site + Firebase)",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

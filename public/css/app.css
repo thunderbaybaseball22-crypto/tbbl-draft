@@ -1,0 +1,75 @@
+:root { --fg:#1b1f24; --bg:#f6f7f9; --card:#fff; --accent:#14532d; --accent2:#166534; --warn:#92400e; --line:#d0d5dd; }
+* { box-sizing: border-box; }
+body { margin:0; font:15px/1.4 system-ui, Segoe UI, Arial, sans-serif; color:var(--fg); background:var(--bg); }
+#app { max-width:none; width:100%; margin:0 auto; padding:8px clamp(8px, 2vw, 32px) 40px; }
+h1 { font-size:1.3rem; margin:0; } h2 { font-size:1.1rem; margin:1.2em 0 .4em; } h3 { font-size:1rem; margin:.8em 0 .2em; }
+.top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 0; }
+.banner { background:var(--accent); color:#fff; padding:10px 14px; border-radius:6px; font-size:1.05rem; }
+.count { font:700 1.5rem ui-monospace, Consolas, monospace; margin-left:8px; }
+.yours { background:#fde68a; color:#1b1f24; padding:2px 8px; border-radius:4px; font-weight:700; }
+.msg { min-height:1.2em; margin:6px 0; } .bad { color:#b42318; font-weight:600; }
+nav { display:flex; gap:4px; flex-wrap:wrap; margin:8px 0; }
+button, select, input { font:inherit; padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:#fff; }
+button { cursor:pointer; } button:disabled { opacity:.5; cursor:default; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid #2563eb; outline-offset:1px; }
+nav button[aria-current="true"] { background:var(--accent2); color:#fff; border-color:var(--accent2); }
+button.link { border:0; background:none; color:#1d4ed8; text-decoration:underline; padding:2px; }
+.controls { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:8px; }
+.controls label, .admin label { display:flex; flex-direction:column; gap:2px; font-size:.9rem; }
+.admin label { display:inline-flex; margin-right:8px; }
+.admin section { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px 14px; margin:10px 0; }
+.scroll { overflow:auto; max-height:calc(100vh - 220px); min-height:240px; background:var(--card); border:1px solid var(--line); border-radius:6px; }
+table { border-collapse:collapse; width:100%; background:var(--card); }
+th, td { border-bottom:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
+thead th { position:sticky; top:0; background:#eef1f4; }
+button.sort { border:0; background:none; font-weight:700; padding:0; }
+.grid td { min-width:96px; font-size:.82rem; border:1px solid var(--line); }
+/* Draft board: rows = pick slots 1-24, columns = rounds. No height cap and no vertical scroll: compact one-line
+   cells so all 24 rows fit on a laptop screen. Only sideways scrolling is allowed (first column stays put). */
+ol.recent { list-style:none; margin:0; padding:0; }
+.boardtitle { margin:.3em 0 .2em; }
+.boardwrap { overflow-x:auto; overflow-y:visible; background:var(--card); border:1px solid var(--line); border-radius:6px; }
+.boardwrap table.grid { width:100%; min-width:max-content; }
+.boardwrap .grid th, .boardwrap .grid td { padding:1px 5px; line-height:1.2; font-size:.74rem; white-space:nowrap; vertical-align:middle; }
+.boardwrap .grid td { min-width:118px; max-width:190px; overflow:hidden; text-overflow:ellipsis; }
+.boardwrap .grid td.writein { white-space:normal; }
+.boardwrap .grid thead th { position:sticky; top:0; z-index:2; background:#eef1f4; text-align:center; }
+.boardwrap .grid th.slot { position:sticky; left:0; z-index:1; background:#eef1f4; text-align:left; border-right:2px solid var(--line); }
+.boardwrap .grid thead th.slot { z-index:3; }
+.boardwrap .slotno { display:inline-block; min-width:1.6em; font-weight:700; }
+.grid td.current { background:#fef08a; outline:2px solid #ca8a04; }
+.grid td.made { background:#ecfdf3; } .grid td.skipped { background:#fee4e2; } .grid td.mine b { color:#1d4ed8; }
+.note { color:#475467; font-size:.9rem; } .sr { position:absolute; left:-9999px; }
+.login { max-width:380px; margin:12vh auto; background:var(--card); padding:20px; border:1px solid var(--line); border-radius:8px; }
+.login label { display:flex; flex-direction:column; margin:10px 0; }
+.queue li { margin:4px 0; } pre { white-space:pre-wrap; }
+@media (max-width:600px) { .count { font-size:1.2rem; } }
+.wi { color:#92400e; } .writein { background:#fff; border:1px solid var(--line); border-radius:6px; padding:6px 12px; margin-bottom:8px; }
+
+/* auto-draft: exhausted-list warning and last-clock-check indicator */
+.alert { margin: .5rem 0; padding: .6rem .8rem; border: 2px solid #b00020; background: #fde7ea; color: #5c0011; border-radius: 4px; }
+.tickinfo { margin-top: .4rem; font-size: .9rem; color: #fff; }
+.tickinfo.stale { color: #5c0011; background: #fff4d6; padding: .3rem .5rem; border: 1px solid #c77700; border-radius: 4px; }
+
+/* Owners screen: Set password panel */
+.pwpanel { border: 1px solid #999; border-radius: 6px; padding: .5rem .75rem; margin: .5rem 0; }
+.pwpanel[hidden] { display: none; }
+
+/* void / added picks */
+.grid td.void { background:#e5e7eb; color:#475467; text-decoration:line-through; } .grid td.void .voidtag, .voidtag { text-decoration:none; display:inline-block; font-weight:700; color:#b42318; }
+.grid td.hasadded { white-space:normal; }
+.boardwrap .grid .pk.added { border-top:1px dashed var(--line); margin-top:1px; white-space:nowrap; }
+.grid .pk.made { background:#ecfdf3; } .grid .pk.skipped { background:#fee4e2; } .grid .pk.void { background:#e5e7eb; text-decoration:line-through; } .grid .pk.current { background:#fef08a; outline:2px solid #ca8a04; }
+.addno { font-weight:700; color:#6941c6; } tr.void td { color:#475467; }
+
+/* traded = light blue; on the clock = the original yellow; traded + on the clock = yellow with a blue left border; void = grey */
+.grid td.traded, .grid .pk.traded { background:#dbeafe; }
+.grid td.traded.skipped, .grid .pk.traded.skipped { box-shadow:inset 4px 0 0 #d92d20; }
+.grid td.current, .grid .pk.current { background:#fef08a; outline:2px solid #ca8a04; }
+.grid td.traded.current, .grid .pk.traded.current { box-shadow:inset 5px 0 0 #2563eb; }
+.grid td.void, .grid .pk.void { background:#e5e7eb; outline:none; }
+.legend { display:flex; flex-wrap:wrap; gap:.4em 1.2em; margin:.3em 0; font-size:.8rem; list-style:none; padding:0; } .legend .sw { display:inline-block; width:1.1em; height:.9em; border:1px solid #98a2b3; vertical-align:middle; margin-right:.3em; }
+.legend .sw.t { background:#dbeafe; } .legend .sw.c { background:#fef08a; outline:2px solid #ca8a04; outline-offset:-2px; } .legend .sw.v { background:#e5e7eb; } .legend .sw.s { background:#fee4e2; } .legend .sw.w { background:#fff; border-style:dashed; }
+
+/* player stats columns */
+th.num, td.num { text-align:right; white-space:nowrap; }

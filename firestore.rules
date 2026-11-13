@@ -1,0 +1,353 @@
+rules_version = '2';
+// TBBL draft security rules.
+// The commissioner is the single email stored in config/admin (create that document by hand
+// in the Firebase console; no client can write it). Owners are listed in owners/{email}.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    // Logins are created by the commissioner (self sign-up should be turned off in the console);
+    // an account must exist in Auth AND be listed in owners/ to draft.
+    function signedIn() { return request.auth != null && request.auth.token.email != null; }
+    function email() { return request.auth.token.email.lower(); }
+    function adminDoc() { return /databases/$(db)/documents/config/admin; }
+    function isAdmin() {
+      return signedIn() && exists(adminDoc()) && get(adminDoc()).data.email.lower() == email();
+    }
+    function ownerDoc() { return /databases/$(db)/documents/owners/$(email()); }
+    function myTeams() { return exists(ownerDoc()) ? get(ownerDoc()).data.teams : []; }
+    function cfg() { return get(/databases/$(db)/documents/config/draft).data; }
+    function pickPath(n) { return /databases/$(db)/documents/picks/$(string(n)); }
+    function now() { return request.time.toMillis(); }
+    // Real-draft lock (config/lock.locked == true). While it is ON the commissioner cannot restart the draft or
+    // re-import data that resets picks; the commissioner turns it off on purpose first. Missing doc = OFF.
+    function lockDoc() { return /databases/$(db)/documents/config/lock; }
+    function locked() { return exists(lockDoc()) && get(lockDoc()).data.locked == true; }
+    function restartDoc() { return /databases/$(db)/documents/config/restart; }
+
+    // config/lock: only the commissioner can read or change it (turning it off is always allowed).
+    match /config/lock {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['locked', 'by', 'at'])
+        && request.resource.data.locked is bool;
+      allow delete: if false;
+    }
+
+    // config/restart: marker present only while a commissioner Restart is running (or was interrupted). Everyone
+    // signed in can see it (the clock stands still while it exists); only the commissioner writes it.
+    match /config/restart {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /config/admin {
+      allow read: if signedIn();
+      allow write: if false;                    // set once, by hand, in the console
+    }
+
+    // config/email: the commissioner's ON/OFF switch for group pick emails (missing = OFF). The ticker
+    // (admin SDK) reads it; nobody else can read or change it.
+    match /config/email {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['groupEmails', 'enabledAt', 'by', 'at'])
+        && request.resource.data.groupEmails is bool;
+      allow delete: if false;
+    }
+
+    // groupMail/state: which picks have been emailed (written only by the ticker; the commissioner can look).
+    match /groupMail/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+      allow delete: if isAdmin() && !locked();   // Restart resets the batch state
+    }
+
+    // logins/{email}: "this login worked at ..." written by the owner at sign-in, read by the commissioner
+    // for the Owners screen. Informational only.
+    match /logins/{key} {
+      allow read: if isAdmin();
+      allow write: if signedIn() && key == email()
+        && request.resource.data.keys().hasOnly(['at'])
+        && request.resource.data.at is number
+        && request.resource.data.at > now() - 120000 && request.resource.data.at < now() + 120000;
+    }
+
+    // pwRequests/{email}: "set this owner's password" requests from the commissioner's Owners screen. They hold
+    // a typed temporary password, so ONLY the commissioner can create, read or delete them (no owner ever can).
+    // No client update: a request is create-once; the ticker (admin SDK, bypasses rules) applies it and then
+    // deletes it at once. A request older than 15 minutes is never applied (tools/pwrequests.mjs).
+    match /pwRequests/{key} {
+      allow read, delete: if isAdmin();
+      allow update: if false;
+      allow create: if isAdmin()
+        && key == key.lower() && key.matches('[^@ ]+@[^@ ]+[.][^@ ]+')
+        && exists(/databases/$(db)/documents/owners/$(key))
+        && request.resource.data.keys().hasOnly(['password', 'requestedAt'])
+        && request.resource.data.keys().hasAll(['password', 'requestedAt'])
+        && request.resource.data.password is string
+        && request.resource.data.password.size() >= 8 && request.resource.data.password.size() <= 128
+        && request.resource.data.requestedAt is number
+        && request.resource.data.requestedAt > now() - 120000 && request.resource.data.requestedAt < now() + 120000
+        // the same batch must write the password-free status that goes with it
+        && existsAfter(/databases/$(db)/documents/pwStatus/$(key))
+        && getAfter(/databases/$(db)/documents/pwStatus/$(key)).data.state == 'pending'
+        && getAfter(/databases/$(db)/documents/pwStatus/$(key)).data.requestedAt == request.resource.data.requestedAt;
+    }
+
+    // pwStatus/{email}: what the Owners screen shows (pending / done / failed + reason). NEVER holds a password:
+    // the commissioner's browser may only write { state: 'pending', requestedAt, at }; the ticker writes the
+    // outcome (state, requestedAt, at, reason, note) with the admin SDK. Only the commissioner can read it.
+    match /pwStatus/{key} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['state', 'requestedAt', 'at'])
+        && request.resource.data.keys().hasAll(['state', 'requestedAt', 'at'])
+        && request.resource.data.state == 'pending'
+        && request.resource.data.requestedAt is number
+        && request.resource.data.at is number;
+    }
+
+    match /config/draft {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin() && !locked();   // else delete + re-create would bypass the lock
+      // While locked the commissioner cannot move the draft back to not-started (Restart / re-import of the order);
+      // Pause, Resume, Start and everything else stay available.
+      allow update: if (isAdmin() && !(locked() && request.resource.data.status == 'pending' && resource.data.status != 'pending'))
+        || (signedIn() && autoAdvance());
+
+      // Any signed-in client may (a) start the draft once its start time has passed,
+      // (b) skip the pick on the clock once its deadline has passed, (c) move the clock on after
+      // the pick on the clock was just made. Only these four fields may change, and the new values
+      // are pinned:
+      //  - status: always live (only the commissioner pauses or completes the draft);
+      //  - currentPick: the earliest open pick after the change (looked up within 3 picks of the
+      //    old one; a bigger gap needs the commissioner), or null when none remain;
+      //  - deadline: in the future and no further out than two clock lengths plus 24 hours.
+      function autoAdvance() {
+        let o = resource.data;
+        let n = request.resource.data;
+        return n.diff(o).affectedKeys().hasOnly(['status', 'currentPick', 'deadline', 'remainingMs'])
+          && n.remainingMs == null
+          && (
+            (o.status == 'pending' && n.status == 'live' && o.startAt != null && now() >= o.startAt
+                && !exists(restartDoc())
+                && n.currentPick == 1 && openAfter(1) && deadlineOk(o, n))
+            || (o.status == 'live' && n.status == 'live' && o.currentPick != null
+                && o.deadline != null && now() >= o.deadline
+                && get(pickPath(o.currentPick)).data.status == 'open'
+                && getAfter(pickPath(o.currentPick)).data.status == 'skipped'
+                && nextOk(o.currentPick, n) && deadlineOk(o, n))
+            || (o.status == 'live' && n.status == 'live' && o.currentPick != null
+                && get(pickPath(o.currentPick)).data.status == 'open'
+                && getAfter(pickPath(o.currentPick)).data.status == 'made'
+                && nextOk(o.currentPick, n) && deadlineOk(o, n))
+          );
+      }
+
+      // The order of picks is numeric (1..N) except for picks the commissioner ADDED mid-draft (keys like 60.01):
+      // every added pick, and the pick it follows, carry a `next` pointer so the order can be walked here.
+      // A pick without `next` is followed by k + 1. null = last pick. A voided pick is never 'open', so the
+      // walk steps over it just like over a made pick.
+      function nx(k) {
+        return (k == null || !exists(pickPath(k))) ? null : get(pickPath(k)).data.get('next', k + 1);
+      }
+      function openAfter(k) {
+        return k != null && existsAfter(pickPath(k)) && getAfter(pickPath(k)).data.status == 'open';
+      }
+      function nextOk(c, n) {
+        let a = nx(c);
+        let b = nx(a);
+        let d = nx(b);
+        return (a != null && n.currentPick == a && openAfter(a))
+          || (b != null && n.currentPick == b && !openAfter(a) && openAfter(b))
+          || (d != null && n.currentPick == d && !openAfter(a) && !openAfter(b) && openAfter(d))
+          || (n.currentPick == null && !openAfter(a) && !openAfter(b) && !openAfter(d) && nx(d) == null);
+      }      function deadlineOk(o, n) {
+        return n.currentPick == null
+          ? n.deadline == null
+          : (n.deadline is number
+             // Floor: a fresh pick always gets a full clock, and closed hours only add time, so the
+             // deadline can never be earlier than now + clock length (minus 2 minutes of clock skew).
+             // Without it any owner could write "now + 1 second" and chain-skip the draft.
+             // Ceiling: up to 12 h waiting for the window + the clock + up to 12 h closed per day.
+             // Keep both in step with deadlineFloor / deadlineCeiling in public/js/lib/clock.js.
+             && n.deadline >= now() + o.clockMinutes * 60000 - 120000
+             && n.deadline <= now() + 2 * o.clockMinutes * 60000 + 86400000);
+      }
+    }
+    match /picks/{n} {
+      allow read: if signedIn();
+      // Draft-order re-import (create/delete) is refused while the real-draft lock is ON. The ONE exception is the commissioner's
+      // mid-draft Add pick: a new OPEN pick flagged added, while the draft is live or paused (works while locked).
+      allow delete: if isAdmin() && !locked();
+      allow create: if isAdmin() && (!locked() || addedPickShape());
+      // Void / Un-void are commissioner updates (status open|skipped <-> void); owners can only fill picks (ownerMakesPick) and
+      // nobody else can touch a pick, so owners cannot void, un-void or add.
+      function addedPickShape() {
+        let n = request.resource.data;
+        return cfg().status in ['live', 'paused']
+          && n.added == true && n.status == 'open' && n.playerId == null && n.writeIn == null
+          && n.base is number && n.addSeq is number && n.overall > n.base && n.overall < n.base + 1
+          && n.ownerTeam == n.origTeam;
+      }
+      allow update: if isAdmin() || ownerMakesPick() || clockSkipsPick();
+
+      // An owner fills the pick on the clock, or a skipped pick, that their team currently owns,
+      // with a player whose taken/{playerId} marker is created in the same write (create-only =
+      // unique). Future open picks are commissioner-only.
+      function ownerMakesPick() {
+        let o = resource.data;
+        let n = request.resource.data;
+        return cfg().status == 'live'
+          && o.status in ['open', 'skipped']
+          && (o.status == 'skipped' || cfg().currentPick == o.overall)
+          && o.ownerTeam in myTeams()
+          && n.status == 'made'
+          && n.diff(o).affectedKeys().hasOnly(['status', 'playerId', 'madeBy', 'madeAt', 'writeIn'])
+          && validContent(n)
+          && n.ownerTeam == o.ownerTeam && n.origTeam == o.origTeam && n.overall == o.overall
+          && n.madeBy == email()
+          && n.playerId is string
+          && existsAfter(/databases/$(db)/documents/taken/$(n.playerId))
+          && getAfter(/databases/$(db)/documents/taken/$(n.playerId)).data.overall == o.overall;
+      }
+
+      // The player must be a pool player (a pool/{id} marker exists) or a write-in whose id is
+      // WI-<overall> with a well-formed writeIn object.
+      function validContent(n) {
+        return n.playerId is string
+          && (n.playerId == ('WI-' + string(n.overall))
+              ? (n.writeIn is map && n.writeIn.name is string && n.writeIn.name.size() > 0
+                 && n.writeIn.name.size() <= 100 && n.writeIn.status == 'pending'
+                 && n.writeIn.url is string && n.writeIn.url.size() <= 500
+                 && n.writeIn.note is string && n.writeIn.note.size() <= 500
+                 && (n.writeIn.url.size() > 0 || n.writeIn.note.size() > 0))
+              : (n.writeIn == null && exists(/databases/$(db)/documents/pool/$(n.playerId))
+                 && !exists(/databases/$(db)/documents/removed/$(n.playerId))));
+      }
+
+      function clockSkipsPick() {
+        let o = resource.data;
+        let n = request.resource.data;
+        return cfg().status == 'live'
+          && cfg().currentPick == o.overall
+          && cfg().deadline != null
+          && now() >= cfg().deadline
+          && o.status == 'open'
+          && n.status == 'skipped'
+          && n.diff(o).affectedKeys().hasOnly(['status', 'wasSkipped', 'skippedAt']);
+      }
+    }
+
+    // taken/{playerId}: one document per unavailable player (keepers have overall 0).
+    // Create-only for owners, so a player can never be drafted twice.
+    match /taken/{pid} {
+      allow read: if signedIn();
+      allow update, delete: if isAdmin();
+      allow create: if isAdmin() || (
+        signedIn() && cfg().status == 'live'
+        && request.resource.data.team in myTeams()
+        && request.resource.data.overall > 0
+        && (pid == ('WI-' + string(request.resource.data.overall))
+            || (exists(/databases/$(db)/documents/pool/$(pid))
+                && !exists(/databases/$(db)/documents/removed/$(pid))))
+        && getAfter(pickPath(request.resource.data.overall)).data.playerId == pid
+        && getAfter(pickPath(request.resource.data.overall)).data.ownerTeam == request.resource.data.team
+      );
+    }
+
+    // pool/{playerId}: empty marker per pool player (written on player import) so a pick can
+    // only name a real pool player.
+    match /pool/{pid} {
+      allow read: if signedIn();
+      allow write: if isAdmin() && !locked();
+    }
+
+    // removed/{playerId}: players the commissioner took out of the draft list after import (listed by mistake).
+    // Nobody can pick a player with a document here (see validContent and taken/). Commissioner only, and allowed
+    // while the real-draft lock is ON and while the draft is live; deleting the document restores the player.
+    match /removed/{pid} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'reason', 'by', 'at'])
+        && request.resource.data.name is string && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 200
+        && request.resource.data.by == email() && request.resource.data.at is number;
+      allow delete: if isAdmin();
+    }
+
+    match /playerchunks/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin() && !locked();
+    }
+
+    match /owners/{key} {
+      allow read: if signedIn() && (key == email() || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // queues/{lowercase email}: an owner's private draft list + auto-draft switch. Only the owner and
+    // the commissioner can read it (the commissioner's browser runs auto-draft for owners who have no
+    // tab open); only the owner can write it.
+    match /queues/{key} {
+      allow read: if signedIn() && (key == email() || isAdmin());
+      allow write: if signedIn() && key == email()
+        && request.resource.data.keys().hasOnly(['items', 'autoDraft'])
+        && request.resource.data.autoDraft is bool
+        && request.resource.data.items is list && request.resource.data.items.size() <= 300;
+    }
+
+    // notices/{email}: written only by the unattended ticker (admin SDK bypasses rules), e.g. "your list is exhausted".
+    match /notices/{key} {
+      allow read: if signedIn() && (key == email() || isAdmin());
+      allow write: if false;
+      allow delete: if isAdmin() && !locked();   // Restart clears owner notices
+    }
+    // ticks/last: heartbeat "the clock was last checked at ...". Any signed-in browser may refresh it,
+    // at most once every 4 minutes (about 180 writes per 12 clock hours).
+    match /ticks/last {
+      allow read: if signedIn();
+      allow create: if signedIn() && validTick();
+      allow update: if signedIn() && validTick() && now() - resource.data.at >= 240000;
+      function validTick() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['at', 'by']) && d.by == email()
+          && d.at is number && d.at > now() - 120000 && d.at < now() + 120000;
+      }
+    }
+
+    // writeinChecks/{normalised name}: the commissioner marks a queued write-in as verified ahead of time.
+    match /writeinChecks/{key} {
+      allow read: if signedIn() && isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Owners may only log their own pick, and 'system' entries only accompany a real skip/start.
+    match /audit/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && (isAdmin() || (recent(request.resource.data)
+                                      && (ownerPickAudit(request.resource.data)
+                                          || systemAudit(request.resource.data))));
+      allow update: if false;
+      // Restart clears the log: commissioner only, never while locked, and only once the draft is back to not-started.
+      allow delete: if isAdmin() && !locked() && cfg().status == 'pending';
+
+      function recent(d) { return d.at is number && d.at > now() - 600000 && d.at < now() + 600000; }
+      function ownerPickAudit(d) {
+        return d.by == email() && d.type in ['pick', 'writein'] && d.overall is number
+          && get(pickPath(d.overall)).data.status in ['open', 'skipped']
+          && getAfter(pickPath(d.overall)).data.status == 'made'
+          && getAfter(pickPath(d.overall)).data.madeBy == email()
+          && d.playerId == getAfter(pickPath(d.overall)).data.playerId;
+      }
+      function systemAudit(d) {
+        return d.by == 'system' && (
+          (d.type == 'skip' && d.overall is number
+            && get(pickPath(d.overall)).data.status == 'open'
+            && getAfter(pickPath(d.overall)).data.status == 'skipped')
+          || (d.type == 'start' && cfg().status == 'pending'
+            && getAfter(/databases/$(db)/documents/config/draft).data.status == 'live'));
+      }
+    }
+  }
+}

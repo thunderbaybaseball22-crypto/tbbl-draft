@@ -1,0 +1,16 @@
+node_modules/
+.firebase/
+*.log
+.env*
+serviceAccount*.json
+# Real league data (keep private)
+data-private/
+public/js/firebase-config.js
+OwnerEmails.csv
+PlayerFile.csv
+2027TBBLDraftSchedule-TESTING.csv
+*firebase-adminsdk*.json
+.tbbl/
+REHEARSAL-owners.csv
+TBBLPlayerRatings_*.csv
+OwnerEmails-testers.csv

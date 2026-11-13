@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TBBL Draft - offline demo</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <h1>TBBL Draft: offline demo</h1>
+    <p>Runs the real draft rules on the fake sample data with a simulated clock. No login or Firebase is used.
+      Steps: a pick, a skipped pick, a late pick, a pick trade, and an undo.</p>
+    <p><button id="run">Run the walkthrough</button></p>
+    <h2>Step log</h2>
+    <pre id="log" aria-live="polite"></pre>
+    <h2>Audit log</h2>
+    <pre id="audit"></pre>
+  </div>
+  <script type="module" src="js/demo.js"></script>
+</body>
+</html>

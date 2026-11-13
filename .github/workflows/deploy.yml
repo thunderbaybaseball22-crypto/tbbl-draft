@@ -1,0 +1,51 @@
+# Auto-deploy: every push to the main branch runs the tests, then publishes the website and the Firestore
+# security rules to the Firebase project named in the repository variable FIREBASE_WEB_CONFIG.
+# Setup (one time): see docs/SETUP-DEPLOY.md, "Auto-deploy from GitHub".
+#   Secret   FIREBASE_DEPLOY_KEY   the whole JSON key of a deploy service account (roles: Firebase Admin, Service Usage Consumer)
+#   Variable FIREBASE_WEB_CONFIG   the web-app config as JSON: {"apiKey":"...","authDomain":"...","projectId":"...","appId":"..."}
+#   Variable DEPLOY_FROZEN         optional: set to "true" to stop all deploys (do this once the real draft is live)
+# The project is taken from FIREBASE_WEB_CONFIG, and the key must belong to the same project, or the deploy stops.
+name: Deploy to Firebase
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+concurrency:
+  group: tbbl-deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: ${{ vars.DEPLOY_FROZEN != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (a failing test stops the deploy)
+        run: npm test
+      - name: Write public/js/firebase-config.js (git-ignored, so it is built here)
+        env:
+          CFG: ${{ vars.FIREBASE_WEB_CONFIG }}
+        run: |
+          test -n "$CFG" || { echo "Repository variable FIREBASE_WEB_CONFIG is missing"; exit 1; }
+          node -e "const c = JSON.parse(process.env.CFG); for (const k of ['apiKey','authDomain','projectId','appId']) if (!c[k]) { console.error('FIREBASE_WEB_CONFIG lacks ' + k); process.exit(1); }"
+          printf 'export default %s;\n' "$CFG" > public/js/firebase-config.js
+      - name: Deploy hosting and security rules
+        env:
+          CFG: ${{ vars.FIREBASE_WEB_CONFIG }}
+          FIREBASE_KEY: ${{ secrets.FIREBASE_DEPLOY_KEY }}
+        run: |
+          test -n "$FIREBASE_KEY" || { echo "Repository secret FIREBASE_DEPLOY_KEY is missing"; exit 1; }
+          KEYFILE="$RUNNER_TEMP/deploy-key.json"
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s' "$FIREBASE_KEY" > "$KEYFILE"
+          PROJECT_ID=$(node -p "JSON.parse(process.env.CFG).projectId")
+          KEY_PROJECT=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).project_id" "$KEYFILE")
+          [ "$KEY_PROJECT" = "$PROJECT_ID" ] || { echo "The deploy key is for project '$KEY_PROJECT' but FIREBASE_WEB_CONFIG is for '$PROJECT_ID'. Stopping."; exit 1; }
+          export GOOGLE_APPLICATION_CREDENTIALS="$KEYFILE"
+          echo "Deploying to $PROJECT_ID"
+          npx --yes firebase-tools@15.36.0 deploy --only hosting,firestore:rules --project "$PROJECT_ID" --non-interactive
