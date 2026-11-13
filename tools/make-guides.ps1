@@ -21,8 +21,7 @@ function New-Docx($htmlPath, $docxPath) {
     'word/_rels/document.xml.rels' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="guide" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="guide.html"/></Relationships>'
     'word/document.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:altChunk r:id="guide"/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>'
   }
-  if (Test-Path $docxPath) { Remove-Item $docxPath }
-  $fs = [System.IO.File]::Open($docxPath, 'CreateNew')
+  $fs = [System.IO.File]::Open($docxPath, 'CreateNew')   # fails rather than overwrite
   $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
   try {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -33,15 +32,25 @@ function New-Docx($htmlPath, $docxPath) {
   } finally { $zip.Dispose(); $fs.Dispose() }
 }
 
+# Never overwrite a file that already exists (you may have edited it in Word, e.g. added screenshots):
+# a new build goes to "<name> (built <date time>).<ext>" instead.
+$stamp = Get-Date -Format 'yyyy-MM-dd HHmm'
+function Free-Name($name, $ext) {
+  $p = Join-Path $out "$name.$ext"
+  if (Test-Path -LiteralPath $p) { $p = Join-Path $out "$name (built $stamp).$ext" }
+  if (Test-Path -LiteralPath $p) { throw "$p already exists; wait a minute and run again" }
+  return $p
+}
+
 foreach ($name in 'TBBL-Draft-Owner-Guide', 'TBBL-Draft-Commissioner-Guide') {
   $html = Join-Path $out "$name.html"
-  $pdf = Join-Path $out "$name.pdf"
-  if (Test-Path $pdf) { Remove-Item $pdf }
+  $pdf = Free-Name $name 'pdf'
+  $docx = Free-Name $name 'docx'
   $url = ([System.Uri]$html).AbsoluteUri
   $p = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @('--headless=new', '--disable-gpu', '--no-first-run', "--user-data-dir=`"$profileDir`"", '--no-pdf-header-footer', "--print-to-pdf=`"$pdf`"", $url)
   if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "Edge did not finish the PDF for $name" }
   if (-not (Test-Path $pdf)) { throw "No PDF was written for $name" }
-  New-Docx $html (Join-Path $out "$name.docx")
+  New-Docx $html $docx
   Remove-Item $html
-  "guides\$name.pdf and .docx"
+  "$(Split-Path -Leaf $pdf) and $(Split-Path -Leaf $docx)"
 }
