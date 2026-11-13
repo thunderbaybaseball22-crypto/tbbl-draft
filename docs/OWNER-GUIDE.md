@@ -27,6 +27,10 @@ Turn **Auto-draft** On (checkbox on the Queue tab). Then, when your pick comes u
 **If your list runs out:** Auto-draft never picks the best available player. If your pick arrives and nobody on your list is left, nothing is picked, a red **"Your list is exhausted"** message appears at the top of the site and on My picks, and your normal clock keeps running for the full hour. Make a pick yourself before time is up. If the time passes, the pick is skipped like any other and you can still make it later. (An email alert is not built; it is a possible later add-on.)
 
 **When does Auto-draft actually run?** Your list is private: other owners never see it. Auto-draft is carried out by your own open browser, by the commissioner's Monitor page, or by the commissioner's unattended ticker, so it works even if your browser is closed, as long as the commissioner is running the Monitor page or the ticker. If none of those is running when your pick arrives, it happens the next time one of them runs (if your clock has passed by then and the list could have filled it, the list is used before the pick is skipped). If your list has no available player left, nothing is picked, the clock keeps running, and you see a red warning in the app: make a pick before your hour is up. The yellow line **"Clock last checked"** at the top shows when any runner last checked the clock.
+## Who is online
+
+The line under the banner, **Online now**, lists the teams (codes like JER, SCA) that have the site open. Your team shows while your page is open in front; a page left in the background, or closed, drops off within about 12 minutes. Signing out removes you at once. Only team codes are shown, never emails.
+
 ## Other tabs
 
 - **Board**: the draft board with the 24 pick slots down the side and the 13 rounds across, the current pick highlighted, then the recent picks. All 24 rows show at once; scroll sideways if your screen cannot fit all rounds.

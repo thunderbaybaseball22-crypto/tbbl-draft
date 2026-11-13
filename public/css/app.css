@@ -5,6 +5,8 @@ body { margin:0; font:15px/1.4 system-ui, Segoe UI, Arial, sans-serif; color:var
 h1 { font-size:1.3rem; margin:0; } h2 { font-size:1.1rem; margin:1.2em 0 .4em; } h3 { font-size:1rem; margin:.8em 0 .2em; }
 .top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 0; }
 .banner { background:var(--accent); color:#fff; padding:10px 14px; border-radius:6px; font-size:1.05rem; }
+.online { margin:6px 0 0; font-size:.9rem; color:#344054; }
+.online::before { content:''; display:inline-block; width:.6em; height:.6em; border-radius:50%; background:#16a34a; margin-right:.4em; vertical-align:middle; }
 .count { font:700 1.5rem ui-monospace, Consolas, monospace; margin-left:8px; }
 .yours { background:#fde68a; color:#1b1f24; padding:2px 8px; border-radius:4px; font-weight:700; }
 .msg { min-height:1.2em; margin:6px 0; } .bad { color:#b42318; font-weight:600; }

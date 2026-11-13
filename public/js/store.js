@@ -11,13 +11,14 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { loadSchedule, loadPlayers, loadOwners, diffPlayers, diffSchedule, diffOwners } from './lib/csv.js';
 import { cfgOut, pickOut, same, derivePlayers } from './lib/persist.js';
 import * as D from './lib/draft.js';
+import { beatDue } from './lib/presence.js';
 import { normName } from './lib/writein.js';
 import { tickQueues } from './lib/queue.js';
 import { planRestart, runPlan, lockedReason, confirmOk } from './lib/restart.js';
 
 const store = {
   fb: null, user: null, isAdmin: false, teams: [], adminEmail: null,
-  config: null, picks: {}, basePlayers: [], removed: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null,
+  config: null, picks: {}, basePlayers: [], removed: {}, presence: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null,
   offset: 0, ready: false, error: null,
 };
 const listeners = new Set();
@@ -53,7 +54,8 @@ export async function start(fb) {
   setInterval(syncServerTime, 10 * 60 * 1000);
   onAuthStateChanged(fb.auth, async (u) => {
     unsubs.forEach((f) => f()); unsubs = [];
-    Object.assign(store, { user: u, isAdmin: false, teams: [], adminEmail: null, config: null, picks: {}, basePlayers: [], removed: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null, ready: !u });
+    Object.assign(store, { user: u, isAdmin: false, teams: [], adminEmail: null, config: null, picks: {}, basePlayers: [], removed: {}, presence: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null, ready: !u });
+    lastBeat = null;
     emit();
     if (!u) return;
     const email = u.email.toLowerCase();
@@ -72,6 +74,9 @@ export async function start(fb) {
         const ch = []; s.forEach((d) => ch.push(d.data()));
         ch.sort((a, b) => a.i - b.i);
         store.basePlayers = ch.flatMap((c) => c.players); emit();
+      });
+      sub(collection(db, 'presence'), (s) => {
+        const p = {}; s.forEach((d) => { p[d.id] = d.data(); }); store.presence = p; emit();
       });
       sub(collection(db, 'removed'), (s) => {
         const r = {}; s.forEach((d) => { r[d.id] = d.data(); }); store.removed = r; emit();
@@ -101,7 +106,29 @@ export async function start(fb) {
 
 // ---------- auth ----------
 export const login = (email, pw) => signInWithEmailAndPassword(store.fb.auth, email.trim(), pw);
-export const logout = () => signOut(store.fb.auth);
+export async function logout() {
+  await clearPresence();
+  return signOut(store.fb.auth);
+}
+
+// ---------- who is online (team codes only; see lib/presence.js) ----------
+let lastBeat = null, beatBusy = false;
+/** Called every second by the UI. Writes presence/{uid} when a beat is due and the page is visible. */
+export async function presenceTick(force = false) {
+  const u = store.fb && store.fb.auth.currentUser;
+  if (!u || beatBusy || !store.ready) return;
+  const now = serverNow();
+  if (!beatDue({ teams: store.teams, visible: document.visibilityState === 'visible', lastBeat, now, force })) return;
+  beatBusy = true; lastBeat = now;
+  try { await setDoc(doc(store.fb.db, 'presence', u.uid), { teams: store.teams, at: now }); } catch { /* not an owner any more, or offline: try again next beat */ } finally { beatBusy = false; }
+}
+/** Remove this login from the online list (sign-out, or the page is closing; best effort). */
+export async function clearPresence() {
+  const u = store.fb && store.fb.auth.currentUser;
+  if (!u || !store.teams.length) return;
+  lastBeat = null;
+  try { await deleteDoc(doc(store.fb.db, 'presence', u.uid)); } catch { /* it expires by itself */ }
+}
 export const resetPassword = (email) => sendPasswordResetEmail(store.fb.auth, email.trim());
 export const changePassword = (pw) => updatePassword(store.fb.auth.currentUser, pw);
 

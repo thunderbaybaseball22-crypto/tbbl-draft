@@ -8,6 +8,7 @@ import { checkPassword, PASSWORD_RULES, REQUEST_EXPIRY_MINUTES } from './lib/pas
 import { RESTART_WORD, lockedReason } from './lib/restart.js';
 import { pickLabel, overallLabel } from './lib/pickno.js';
 import { checkOwnerEdit, ownerFormValues } from './lib/owners.js';
+import { onlineTeams, onlineText, ONLINE_MS } from './lib/presence.js';
 import * as S from './store.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -70,6 +71,7 @@ function render() {
       <header class="top"><h1>TBBL Draft</h1><div class="who"><span id="who"></span>
         <button id="chpw" class="link">Change password</button> <button id="logout">Sign out</button></div></header>
       <div id="banner" class="banner" role="status"></div>
+      <p id="online" class="online" title="Teams with the site open in the last ${ONLINE_MS / 60000} minutes"></p>
       <p id="msg" class="msg" role="alert"></p>
       <nav id="nav" aria-label="Sections"></nav>
       <main id="main" tabindex="-1"></main>`;
@@ -83,11 +85,18 @@ function render() {
     shell.addEventListener('click', onClick);
     shell.addEventListener('input', onInput);
     shell.addEventListener('change', onInput);
+    if (!ui.presenceHooks) {
+      ui.presenceHooks = true;
+      // back on the page: show up as online at once; page closing: drop off the list (best effort)
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') S.presenceTick(true); });
+      window.addEventListener('pagehide', () => { S.clearPresence(); });
+    }
   }
   $('#who').textContent = `${r.user.email}${r.isAdmin ? ' (commissioner)' : ''}${r.teams.length ? ' · team ' + r.teams.join(', ') : ''}`;
   const tabs = r.isAdmin ? [...TABS, ['admin', 'Commissioner'], ['monitor', 'Monitor']] : TABS;
   $('#nav').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" aria-current="${ui.tab === k}">${esc(n)}</button>`).join('');
   updateBanner();
+  updateOnline();
   if (r.error) say('Connection problem: ' + r.error, true);
   if (!r.ready) { $('#main').textContent = 'Loading…'; return; }
   if (!r.config) { $('#main').innerHTML = '<p>The draft has not been set up yet. The commissioner needs to import the draft order and players (Commissioner tab).</p>'; if (r.isAdmin) { ui.tab = 'admin'; } else return; }
@@ -110,6 +119,12 @@ function renderLogin(shell) {
 }
 
 // ---------------------------------------------------------------- banner / clock
+/** "Online now (3): JER RAV SCA" under the banner (team codes only). */
+function updateOnline() {
+  const el = $('#online'); if (!el) return;
+  const txt = onlineText(onlineTeams(S.raw().presence, S.serverNow()));
+  if (el.textContent !== txt) el.textContent = txt;
+}
 function updateBanner() {
   const el = $('#banner'); if (!el) return;
   const r = S.raw(), c = r.config;
@@ -143,6 +158,8 @@ function updateBanner() {
 function tick() {
   if (!S.raw().user) return;
   updateBanner();
+  updateOnline();
+  S.presenceTick();
   S.autoAdvance(T);
 }
 

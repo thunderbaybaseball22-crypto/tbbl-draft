@@ -276,6 +276,18 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // presence/{uid}: "who is online" (team codes only, never emails). An owner's open page writes its own
+    // document with exactly the teams it owns and the current time; everyone signed in can read the list.
+    match /presence/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['teams', 'at'])
+        && myTeams().size() > 0 && request.resource.data.teams == myTeams()
+        && request.resource.data.at is number
+        && request.resource.data.at > now() - 120000 && request.resource.data.at < now() + 120000;
+      allow delete: if signedIn() && (uid == request.auth.uid || isAdmin());
+    }
+
     match /playerchunks/{id} {
       allow read: if signedIn();
       allow write: if isAdmin() && !locked();

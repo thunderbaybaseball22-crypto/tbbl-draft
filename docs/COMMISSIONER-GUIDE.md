@@ -46,6 +46,10 @@ League conventions the importer follows:
 
 **Owners** (e.g. `public/sample/SAMPLE-owners.csv`, or the league's `Abb, TeamName, ManagerName, ManagerEmail` layout): `email` (or `ManagerEmail`) and `team_code` (or `Abb`). One email may own several teams (separate codes with a space or `;`).
 
+## Online now (who has the site open)
+
+Every signed-in owner's page, while it is in front, writes `presence/{login id}` with its team codes and the time every 5 minutes; the **Online now** line under the banner shows teams seen in the last 12 minutes (team codes only, never emails). A login with no team, such as a commissioner-only login, is not listed. The rules only let a login write its own entry with exactly the teams it owns. Free-plan cost: about N x N / 5 reads a minute with N teams online (10 online all day is about 14,000 reads in 12 hours), so watch the Firestore usage page during busy days. Publish the rules for this feature (auto-deploy does it on push).
+
 ## Editing an owner (any time, including while live)
 
 Commissioner tab, section 1b (Owners): press **Edit** on a row, change the team code(s), team name, manager or email, then **Save** (or Cancel). The table stops updating while you edit, so nothing you type is lost.
