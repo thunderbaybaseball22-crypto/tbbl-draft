@@ -2,7 +2,7 @@
 
 ## Signing in
 
-Open the link the commissioner sent. First time: type your email and press **Forgot password / first-time setup**; open the email and choose a password (check spam). Then sign in. You can change your password with the link at the top.
+First time: open the link in your invite email from the commissioner. It opens the **first-time setup** screen with your email filled in. Press **Email me a link to set my password**, open that email (from noreply, check spam) and choose your password within about an hour. If that hour runs out, open the invite link again and press the button again; the invite link never expires. Then sign in. (No invite? On the sign-in page, type your email and press **Forgot password / first-time setup**.) You can change your password with the link at the top.
 
 ## The clock
 

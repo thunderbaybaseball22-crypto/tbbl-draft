@@ -276,6 +276,20 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // invites/{email}: owner invites queued from the Owners screen and sent by the ticker (admin SDK, which also
+    // records sent / failed). The commissioner can only queue one (state pending) for a listed owner, or delete it.
+    match /invites/{key} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && key == key.lower() && key.matches('[^@ ]+@[^@ ]+[.][^@ ]+')
+        && exists(/databases/$(db)/documents/owners/$(key))
+        && request.resource.data.keys().hasOnly(['state', 'requestedAt', 'by'])
+        && request.resource.data.state == 'pending'
+        && request.resource.data.requestedAt is number
+        && request.resource.data.requestedAt > now() - 120000 && request.resource.data.requestedAt < now() + 120000
+        && request.resource.data.by == email();
+    }
+
     // presence/{uid}: "who is online" (team codes only, never emails). An owner's open page writes its own
     // document with exactly the teams it owns and the current time; everyone signed in can read the list.
     match /presence/{uid} {

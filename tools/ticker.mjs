@@ -20,6 +20,8 @@ import { loadMailConfig, createTransport } from './mail-config.mjs';
 import { getAuth } from 'firebase-admin/auth';
 import { processPasswordRequests } from './pwrequests.mjs';
 import { makePasswordIo } from './pwrequests-io.mjs';
+import { processInvites } from './invites.mjs';
+import { makeInviteIo } from './invites-io.mjs';
 
 let transport = null;
 const transportOnce = async (cfg) => (transport ||= await createTransport(cfg));
@@ -120,6 +122,21 @@ async function passwordStep() {
   }
 }
 
+// Owner invites from the Owners screen (own step, like the password requests). Mail settings are only loaded
+// when an invite is waiting, so a PC without mail.json keeps working until invites are used.
+async function inviteStep() {
+  try {
+    const pending = await db.collection('invites').where('state', 'in', ['pending', 'sending']).limit(1).get();
+    if (pending.empty) return;
+    const cfg = loadMailConfig();
+    const inv = makeInviteIo(db, getAuth(app), { from: cfg.from, sendMail: async (msg) => (await transportOnce(cfg)).sendMail(msg) });
+    const r = await failFast(processInvites(inv, { siteUrl: cfg.siteUrl, log: (m) => console.log(`[${stamp()}] invite ${m}`) }), 60000, 'The invite step');
+    console.log(`[${stamp()}] invites: sent=${r.sent} failed=${r.failed} retry=${r.retry} busy=${r.busy}`);
+  } catch (e) {
+    console.error(`[${stamp()}] invite step FAILED (will retry next run): ${String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 300)}`);
+  }
+}
+
 try {
   const r = await failFast(runTicker(io), 60000, 'The ticker');
   console.log(`[${stamp()}] ticker ok: ${r.ran ? 'worked' : 'nothing due'}; steps=${r.steps.join(',') || 'none'}; conflicts=${r.conflicts}; notices=${r.notices.length}`);
@@ -136,9 +153,11 @@ try {
     console.error(`[${stamp()}] group mail FAILED (will retry next run): ${String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 300)}`);
   }
   await passwordStep();
+  await inviteStep();
   process.exit(0);
 } catch (e) {
   console.error(`[${stamp()}] ticker FAILED: ${e && e.message ? e.message : e}`);
   await passwordStep();
+  await inviteStep();
   process.exit(1);
 }

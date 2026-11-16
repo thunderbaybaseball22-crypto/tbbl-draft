@@ -46,6 +46,16 @@ League conventions the importer follows:
 
 **Owners** (e.g. `public/sample/SAMPLE-owners.csv`, or the league's `Abb, TeamName, ManagerName, ManagerEmail` layout): `email` (or `ManagerEmail`) and `team_code` (or `Abb`). One email may own several teams (separate codes with a space or `;`).
 
+## Inviting owners (invites that never expire)
+
+Firebase's own password-setup links expire after about an hour, and Firebase does not let you change that. So use the invite instead:
+
+1. Commissioner tab, section 1: **Send invite emails to all owners**, or **Send invite** on one row of the Owners table (1b). Changing an owner's email also offers to send one.
+2. The ticker on your PC sends each invite on its next run (about a minute), from the league Gmail account (the same `mail.json` as the group emails). It creates the owner's login first if there is none. The **Invite** column shows *Waiting for the ticker*, then *Sent* with the time, or *Not sent* with the reason.
+3. The invite links to `https://<your site>/#setup?email=...`. That screen has the owner's email filled in and one button, **Email me a link to set my password**. Firebase then sends its 1-hour link at that moment. If the owner is too slow, they open the invite link again and press the button again. The invite itself never expires.
+
+Notes: the ticker must be running (Task Scheduler, see TICKER.md) and `mail.json` must exist; otherwise invites wait and the column keeps saying so. An invite that has not gone out within 7 days is marked *Not sent* rather than going out by surprise later; press **Invite again**. Sending again to an owner who already set a password does no harm: the email tells them to just sign in. The old buttons (Firebase setup links that expire) are still there under "Older way".
+
 ## Online now (who has the site open)
 
 Every signed-in owner's page, while it is in front, writes `presence/{login id}` with its team codes and the time every 5 minutes; the **Online now** line under the banner shows teams seen in the last 12 minutes (team codes only, never emails). A login with no team, such as a commissioner-only login, is not listed. The rules only let a login write its own entry with exactly the teams it owns. Free-plan cost: about N x N / 5 reads a minute with N teams online (10 online all day is about 14,000 reads in 12 hours), so watch the Firestore usage page during busy days. Publish the rules for this feature (auto-deploy does it on push).

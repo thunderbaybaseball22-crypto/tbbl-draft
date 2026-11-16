@@ -58,6 +58,7 @@ const readPlayerFiles = async () => {
 export function mount(root) {
   root.innerHTML = '<div id="shell"></div>';
   S.onChange(render);
+  window.addEventListener('hashchange', () => { if (!S.raw().user) { $('#shell').innerHTML = ''; render(); } });
   setInterval(tick, 1000);
   render();
 }
@@ -104,7 +105,36 @@ function render() {
   fill(ui.tab);
 }
 
+/** Invite link: https://<site>/#setup?email=owner@example.com (see tools/invites.mjs). Returns the email or null. */
+function setupEmail() {
+  const m = /^#setup(?:\?(.*))?$/.exec(location.hash || '');
+  if (!m) return null;
+  return new URLSearchParams(m[1] || '').get('email') || '';
+}
+function renderSetup(shell, email) {
+  if ($('#setupform')) return;
+  shell.innerHTML = `<section class="login"><h1>TBBL Draft: first-time setup</h1>
+    <p>Press the button and we will email you a link to choose your password.</p>
+    <form id="setupform"><label>Your email <input id="su-em" type="email" autocomplete="username" required value="${esc(email)}"></label>
+    <button type="submit">Email me a link to set my password</button></form>
+    <p class="note">The email comes from noreply (check spam). Its link works for about 1 hour. If it runs out, come back to this page (the link in your invite never expires) and press the button again.</p>
+    <p><button type="button" id="su-signin" class="link">I already have a password: sign in</button></p>
+    <p id="msg" class="msg" role="alert"></p></section>`;
+  $('#setupform').onsubmit = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const em = $('#su-em').value.trim();
+      if (!em) throw new Error('Type your email first.');
+      await S.resetPassword(em);
+      say(`Sent. Check ${em} (and spam) for the "Reset your password" email, then choose your password. After that, sign in here.`);
+    });
+  };
+  $('#su-signin').onclick = () => { history.replaceState(null, '', location.pathname + location.search); render(); };
+}
+
 function renderLogin(shell) {
+  const se = setupEmail();
+  if (se !== null) return renderSetup(shell, se);
   if ($('#loginform')) return;
   shell.innerHTML = `<section class="login"><h1>TBBL Draft</h1>
     <form id="loginform"><label>Email <input id="em" type="email" autocomplete="username" required></label>
@@ -425,8 +455,11 @@ function adminSkeleton() {
       <label>Pitchers CSV <input type="file" id="f-pit" accept=".csv"></label> <button data-chk="players">Check</button> <button data-imp="players">Import players</button><br>
       <label>Or the old single players CSV (no stats) <input type="file" id="f-pl" accept=".csv"></label><br>
       <label>Owners CSV <input type="file" id="f-ow" accept=".csv"></label> <button data-chk="owners">Check</button> <button data-imp="owners">Import owners</button>
+      <p><button data-act="inviteall">Send invite emails to all owners</button></p>
+      <p class="note">Recommended. The invite comes from the league Gmail account and links to this site's first-time setup screen; that link never expires. It also creates the login if there is none. The ticker on your PC sends it on its next run (about a minute), so it must be running. The status shows in the Invite column below. To invite one owner, use the Invite button on their row.</p>
+      <details><summary>Older way: Firebase setup links (they expire after about 1 hour)</summary>
       <p><button data-act="mkaccounts">Create owner logins and email each a password-setup link</button>
-      <button data-act="resetall">Re-send password-setup emails to all owners</button></p><pre id="imp-out"></pre></section>
+      <button data-act="resetall">Re-send password-setup emails to all owners</button></p></details><pre id="imp-out"></pre></section>
     <section><h2>1b. Owners</h2><p class="note">Every team with its owner. Passwords are never stored or shown here. "Send set-password email" sends the owner Firebase's password-setup/reset email (works only if a login exists; use "Create owner logins" above first). If an owner cannot use that email, use "Set password": you type a temporary password, and the ticker on your PC sets it (the request only goes through while the ticker is running, and is dropped after ${REQUEST_EXPIRY_MINUTES} minutes). Then give the password to the owner privately and ask them to press "Change password" after signing in.</p><p id="own-msg" class="note" role="status"></p>
       <div id="pw-panel" class="pwpanel" hidden>
         <h3>Set password for <span id="pw-who"></span></h3>
@@ -470,6 +503,14 @@ function pwText(s, email) {
   const old = S.serverNow() - (s.requestedAt || 0) > REQUEST_EXPIRY_MINUTES * 60000;
   return `Pending since ${esc(ET(s.requestedAt))}: waiting for the ticker to run on your PC${s.note ? ' (' + esc(s.note) + ')' : ''}.${old ? ` Older than ${REQUEST_EXPIRY_MINUTES} minutes: it will be dropped, not applied. Cancel it to remove the stored password now.` : ''} <button data-act="pwcancel" data-email="${esc(email)}">Cancel request</button>`;
 }
+// Invite status (invites/{email}, written by the ticker).
+const inviteBusy = (v) => !!v && (v.state === 'pending' || v.state === 'sending');
+function inviteText(v) {
+  if (!v) return 'Not invited';
+  if (v.state === 'sent') return `Sent ${esc(ET(v.sentAt))}${v.loginCreated ? ' (login created)' : ''}`;
+  if (v.state === 'failed') return `<strong>Not sent:</strong> ${esc(v.reason || 'failed')}`;
+  return `Waiting for the ticker (queued ${esc(ET(v.requestedAt))})${v.note ? ': ' + esc(v.note) : ''}`;
+}
 /** Owners table (commissioner). The row in ui.editOwner is shown as an edit form. */
 function ownersHtml(r) {
   const loginAt = (em) => r.logins[em];
@@ -480,16 +521,17 @@ function ownersHtml(r) {
     <td><input id="oe-names" size="22" value="${esc(v.teamNames)}" aria-label="Team name (several: separate with /)"></td>
     <td><input id="oe-manager" size="16" maxlength="100" value="${esc(v.manager)}" aria-label="Manager name"></td>
     <td><input id="oe-email" type="email" size="26" maxlength="254" value="${esc(v.email)}" aria-label="Owner email"></td>
-    <td colspan="3"><button data-act="ownsave">Save</button> <button data-act="owncancel">Cancel</button>
+    <td colspan="4"><button data-act="ownsave">Save</button> <button data-act="owncancel">Cancel</button>
     <p id="oe-msg" class="note" role="alert"></p>
     <p class="note">Several teams: codes separated by a space, names in the same order separated by " / ". Changing the email moves the team and the owner's draft list to the new address; the old address can no longer draft.</p></td></tr>`;
   };
   const row = (o) => (ui.editOwner === o.email ? editRow(o) : `<tr><td>${esc((o.teams || []).join(' '))}</td><td>${esc(Object.values(o.teamNames || {}).join(' / '))}</td><td>${esc(o.manager || '')}</td><td>${esc(o.email)}</td>
     <td>${loginAt(o.email) ? 'Last signed in ' + esc(ET(loginAt(o.email))) : usedSite(o.email) ? 'Has used the site (saved a list or made a pick)' : 'No sign-in recorded'}</td>
-    <td><button data-act="ownedit" data-email="${esc(o.email)}"${ui.editOwner ? ' disabled' : ''}>Edit</button> <button data-act="resetone" data-email="${esc(o.email)}">Send set-password email</button> <button data-act="pwopen" data-email="${esc(o.email)}"${pwState(r.pwStatus[o.email]) === 'pending' ? ' disabled' : ''}>Set password</button></td>
+    <td>${inviteText(r.invites[o.email])}</td>
+    <td><button data-act="ownedit" data-email="${esc(o.email)}"${ui.editOwner ? ' disabled' : ''}>Edit</button> <button data-act="inviteone" data-email="${esc(o.email)}"${inviteBusy(r.invites[o.email]) ? ' disabled' : ''}>${r.invites[o.email] ? 'Invite again' : 'Send invite'}</button> <button data-act="resetone" data-email="${esc(o.email)}">Send set-password email</button> <button data-act="pwopen" data-email="${esc(o.email)}"${pwState(r.pwStatus[o.email]) === 'pending' ? ' disabled' : ''}>Set password</button></td>
     <td>${pwText(r.pwStatus[o.email], o.email)}</td></tr>`);
-  return `<table><thead><tr><th scope="col">Team</th><th scope="col">Team name</th><th scope="col">Manager</th><th scope="col">Email</th><th scope="col">Sign-in status</th><th scope="col">Action</th><th scope="col">Password request</th></tr></thead><tbody>
-    ${[...r.owners].sort((a, b) => (a.teams[0] || '').localeCompare(b.teams[0] || '')).map(row).join('') || '<tr><td colspan="7">No owners imported yet.</td></tr>'}</tbody></table>
+  return `<table><thead><tr><th scope="col">Team</th><th scope="col">Team name</th><th scope="col">Manager</th><th scope="col">Email</th><th scope="col">Sign-in status</th><th scope="col">Invite</th><th scope="col">Action</th><th scope="col">Password request</th></tr></thead><tbody>
+    ${[...r.owners].sort((a, b) => (a.teams[0] || '').localeCompare(b.teams[0] || '')).map(row).join('') || '<tr><td colspan="8">No owners imported yet.</td></tr>'}</tbody></table>
     <p class="note">What this screen can and cannot know: the browser cannot list Firebase logins on the free plan, so it cannot tell whether an account exists or whether a password has been set. "Last signed in" is recorded when an owner signs in with this version of the site; "No sign-in recorded" means none seen since then, not that the owner never signed in.</p>`;
 }
 const draftTeams = (st) => [...new Set(Object.values(st.picks).flatMap((p) => [p.origTeam, p.ownerTeam]))].filter(Boolean);
@@ -762,14 +804,23 @@ function adminAction(act, st, r, d = {}) {
       const { listMoved } = await S.updateOwner(oldEmail, res.owner, res.changes);
       ui.editOwner = null; redrawOwners();
       let msg = `Saved. ${res.changes.join('; ')}.${listMoved ? ' Draft list moved to the new email.' : ''}`;
-      if (res.emailChanged && confirm(`Create a login for ${res.owner.email} and email a password-setup link now?`)) {
-        try { await S.createOwnerAccount(res.owner.email, randomPw()); await S.resetPassword(res.owner.email); msg += ` Login created; setup email sent to ${res.owner.email}.`; }
-        catch (e) {
-          if (e.code !== 'auth/email-already-in-use') throw e;
-          await S.resetPassword(res.owner.email); msg += ` A login already existed for ${res.owner.email}; a set-password email was sent.`;
-        }
-      } else if (res.emailChanged) msg += ' No login was created yet: press "Create owner logins" in section 1 when ready (owners who already have a login are skipped).';
+      if (res.emailChanged && confirm(`Send an invite email to ${res.owner.email} now? (The ticker sends it and creates the login if needed.)`)) {
+        await S.requestInvites([res.owner.email]); msg += ` Invite queued for ${res.owner.email}; watch the Invite column.`;
+      } else if (res.emailChanged) msg += ` No invite sent yet: press Send invite on the row for ${res.owner.email} when ready.`;
       const m = $('#own-msg'); if (m) m.textContent = msg;
+    },
+    inviteall: async () => {
+      const list = r.owners.map((o) => o.email);
+      if (!list.length) return say('Import the owners first.', true);
+      const already = list.filter((e) => r.invites[e] && r.invites[e].state === 'sent').length;
+      if (!confirm(`Send an invite email to ${list.length} owner(s)?${already ? `\n\n${already} of them were already sent one; they get a new one.` : ''}\n\nThe ticker on your PC sends them on its next run, so it must be running.`)) return;
+      await S.requestInvites(list);
+      $('#own-msg').textContent = `${list.length} invite(s) queued. Watch the Invite column: it changes to "Sent" once the ticker has sent each one.`;
+    },
+    inviteone: async () => {
+      if (!d.email || !confirm(`Send an invite email to ${d.email}? The ticker on your PC sends it on its next run.`)) return;
+      await S.requestInvites([d.email]);
+      $('#own-msg').textContent = `Invite queued for ${d.email}. Watch the Invite column.`;
     },
     resetone: async () => {
       if (!d.email || !confirm(`Send a set-password email to ${d.email}?`)) return;

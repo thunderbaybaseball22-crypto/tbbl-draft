@@ -18,7 +18,7 @@ import { planRestart, runPlan, lockedReason, confirmOk } from './lib/restart.js'
 
 const store = {
   fb: null, user: null, isAdmin: false, teams: [], adminEmail: null,
-  config: null, picks: {}, basePlayers: [], removed: {}, presence: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null,
+  config: null, picks: {}, basePlayers: [], removed: {}, presence: {}, invites: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null,
   offset: 0, ready: false, error: null,
 };
 const listeners = new Set();
@@ -54,7 +54,7 @@ export async function start(fb) {
   setInterval(syncServerTime, 10 * 60 * 1000);
   onAuthStateChanged(fb.auth, async (u) => {
     unsubs.forEach((f) => f()); unsubs = [];
-    Object.assign(store, { user: u, isAdmin: false, teams: [], adminEmail: null, config: null, picks: {}, basePlayers: [], removed: {}, presence: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null, ready: !u });
+    Object.assign(store, { user: u, isAdmin: false, teams: [], adminEmail: null, config: null, picks: {}, basePlayers: [], removed: {}, presence: {}, invites: {}, queue: { items: [], autoDraft: false }, queues: {}, checks: [], tickAt: null, audit: [], owners: [], emailCfg: null, mailState: null, logins: {}, pwStatus: {}, lock: null, restart: null, ready: !u });
     lastBeat = null;
     emit();
     if (!u) return;
@@ -97,6 +97,7 @@ export async function start(fb) {
         // Status only (never pwRequests, which holds the typed password): the browser never reads a password back.
         sub(collection(db, 'pwStatus'), (s) => { const p = {}; s.forEach((d) => { p[d.id] = d.data(); }); store.pwStatus = p; emit(); });
         sub(collection(db, 'owners'), (s) => { store.owners = s.docs.map((d) => d.data()); emit(); });
+        sub(collection(db, 'invites'), (s) => { const p = {}; s.forEach((d) => { p[d.id] = d.data(); }); store.invites = p; emit(); });
         sub(collection(db, 'queues'), (s) => { const q = {}; s.forEach((d) => { q[d.id] = { items: d.data().items || [], autoDraft: !!d.data().autoDraft }; }); store.queues = q; emit(); });
         sub(collection(db, 'writeinChecks'), (s) => { store.checks = s.docs.map((d) => d.id); emit(); });
       }
@@ -169,6 +170,17 @@ export async function cancelPasswordRequest(email) {
 export const setGroupEmails = (on) => setDoc(doc(store.fb.db, 'config', 'email'), {
   groupEmails: !!on, enabledAt: on ? Date.now() : (store.emailCfg && store.emailCfg.enabledAt) || null, by: store.user.email.toLowerCase(), at: Date.now(),
 });
+
+// ---------- owner invites (commissioner; sent by the ticker, see tools/invites.mjs) ----------
+/** Queue an invite email for each address (replaces an earlier one; the ticker sends it on its next run). */
+export async function requestInvites(emails) {
+  const { db } = store.fb, by = actor().email;
+  for (let i = 0; i < emails.length; i += 400) {
+    const b = writeBatch(db);
+    for (const e of emails.slice(i, i + 400)) b.set(doc(db, 'invites', e), { state: 'pending', requestedAt: Date.now(), by });
+    await b.commit();
+  }
+}
 
 // ---------- edit one owner (commissioner, Owners screen) ----------
 /**
